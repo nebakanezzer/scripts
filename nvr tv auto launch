@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+import subprocess
+import time
+import pyautogui
+
+#frigate non-auth addy
+URL = "http://192.168.1.12:5000"
+LOAD_DELAY = 7
+
+def main():
+    print("Launching Vivaldi...")
+    # Using --start-fullscreen helps the browser occupy the whole screen immediately
+    subprocess.Popen(["vivaldi", URL, "--new-window", "--start-fullscreen"])
+
+    print(f"Waiting {LOAD_DELAY}s for load...")
+    time.sleep(LOAD_DELAY)
+
+    # 1. INITIAL FOCUS
+    # Click once in the top-left to make sure the window is active
+    pyautogui.click(100, 100)
+    time.sleep(1)
+
+    # 2. TRIGGER FRIGATE FULLSCREEN
+    print("Sending 'f' for Frigate UI Fullscreen...")
+    pyautogui.press('f')
+    
+    # 3. THE "STABILIZATION" PAUSE
+    # Crucial: We need the UI to stop moving before we click or scroll
+    time.sleep(5) 
+
+    # 4. THE LAYER-BREAKING CLICK
+    screen_width, screen_height = pyautogui.size()
+    print("Clicking bottom-right to focus...")
+    pyautogui.click(screen_width - 5, screen_height - 5)
+    time.sleep(1) 
+
+    # 5. THE CONTROLLED SLOW DRAG (Anti-Inertia)
+    print("Performing slow-anchor nudge...")
+    
+    start_x = screen_width - 20
+    start_y = screen_height / 5
+    target_y = start_y - 20 # Adjust the '20' for distance
+    
+    pyautogui.moveTo(start_x, start_y)
+    pyautogui.mouseDown(button='left')
+    
+    # CRITICAL: Duration must be slow (at least 1.0) to avoid 'flick' physics
+    pyautogui.moveTo(start_x, target_y, duration=1.2)
+    
+    # TINY COUNTER-MOVE: Move 1 pixel back down to 'brake' the scrolling engine
+    pyautogui.moveTo(start_x, target_y + 1, duration=0.1)
+    
+    # Hold to ensure the browser realizes we are stationary
+    time.sleep(0.8)
+    pyautogui.mouseUp(button='left')
+
+    # 6. PARK THE MOUSE (No Click)
+    pyautogui.moveTo(screen_width - 5, screen_height - 5)
+
+    print("Done. Layout should be locked.")
+
+if __name__ == "__main__":
+    main()
+
