@@ -4,32 +4,69 @@ import time
 import pyautogui
 import urllib.request
 import urllib.error
+import os
+import signal
 
 # Frigate non-auth addy
 URL = "http://192.168.1.12:5000"
-LOAD_DELAY = 5
-CHECK_INTERVAL = 900  # How often to check if Frigate is alive (in seconds)
+LOAD_DELAY = 7 # Increased slightly for full browser restarts
+CHECK_INTERVAL = 900
+
+# Global variable to keep track of the browser process
+browser_process = None
+
+def launch_browser():
+    """Launches Vivaldi with specific memory-management flags for Linux."""
+    global browser_process
+    
+    print("Launching Vivaldi...")
+    # --disable-dev-shm-usage: CRITICAL for Linux video kiosks. Forces Chromium to use /tmp instead of /dev/shm, preventing memory crashes.
+    # --no-default-browser-check: Stops annoying popups if it restarts.
+    flags = [
+        "vivaldi", URL, 
+        "--new-window", 
+        "--start-fullscreen",
+        "--disable-dev-shm-usage", 
+        "--no-default-browser-check",
+        "--autoplay-policy=no-user-gesture-required"
+    ]
+    
+    browser_process = subprocess.Popen(flags)
+    
+    print(f"Waiting {LOAD_DELAY}s for load...")
+    time.sleep(LOAD_DELAY)
+
+def kill_browser():
+    """Forcefully kills Vivaldi to clear out memory leaks or crashed renderers."""
+    global browser_process
+    print("Terminating Vivaldi...")
+    if browser_process:
+        try:
+            browser_process.terminate()
+            browser_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            browser_process.kill()
+    
+    # Catch-all to ensure all Vivaldi background processes are dead
+    os.system("killall -9 vivaldi-bin > /dev/null 2>&1")
+    time.sleep(2)
 
 def apply_frigate_layout():
     """Applies the specific clicks and anti-inertia drags to set up the Frigate UI."""
     print("Applying Frigate layout formatting...")
     
-    # 1. INITIAL FOCUS
     pyautogui.click(100, 100)
     time.sleep(1)
 
-    # 2. TRIGGER FRIGATE FULLSCREEN
     print("Sending 'f' for Frigate UI Fullscreen...")
     pyautogui.press('f')
-    time.sleep(1) 
+    time.sleep(5) 
 
-    # 3. THE LAYER-BREAKING CLICK
     screen_width, screen_height = pyautogui.size()
     print("Clicking bottom-right to focus...")
     pyautogui.click(screen_width - 5, screen_height - 5)
     time.sleep(1) 
 
-    # 4. THE CONTROLLED SLOW DRAG (Anti-Inertia)
     print("Performing slow-anchor nudge...")
     start_x = screen_width - 20
     start_y = screen_height / 5
@@ -43,83 +80,63 @@ def apply_frigate_layout():
     time.sleep(0.8)
     pyautogui.mouseUp(button='left')
 
-    # 5. PARK THE MOUSE
     pyautogui.moveTo(screen_width - 5, screen_height - 5)
     print("Layout locked.")
 
 def is_network_up():
-    """Checks if the Frigate server is reachable on the network."""
     try:
         urllib.request.urlopen(URL, timeout=5)
         return True
     except (urllib.error.URLError, TimeoutError):
         return False
 
-def is_ui_timed_out(screen_width, screen_height):
+def is_ui_crashed(screen_width, screen_height):
     """
-    Checks if the video feed has timed out by looking at a specific pixel.
-    If the Frigate UI times out, the video feed usually goes black or dark gray.
+    Checks if the screen is purely black (Frigate timeout) 
+    OR matches the Vivaldi 'Dead Bird' dark gray.
     """
-    # Sample a pixel dead-center on the screen
     r, g, b = pyautogui.pixel(int(screen_width / 2), int(screen_height / 2))
     
-    # If the pixel is pure black, assume the video feed died.
-    # NOTE: You may need to change (0,0,0) to match the exact background 
-    # color Frigate shows when a camera disconnects.
+    # Timeout = pure black
     if r == 0 and g == 0 and b == 0:
+        print("Detected Black Screen (Timeout).")
         return True
+        
+    # Dead Bird Screen = usually a uniform dark gray (around RGB 34,34,34 to 45,45,45 depending on theme)
+    # We check if red, green, and blue are perfectly equal and in that dark gray range.
+    if r == g and g == b and 20 <= r <= 50:
+        print(f"Detected Dead Bird Gray (RGB: {r},{g},{b}).")
+        return True
+        
     return False
 
 def main():
-    print("Launching Vivaldi...")
-    subprocess.Popen(["vivaldi", URL, "--new-window", "--start-fullscreen"])
-
-    print(f"Waiting {LOAD_DELAY}s for load...")
-    time.sleep(LOAD_DELAY)
-
-    # Do the initial layout setup
+    launch_browser()
     apply_frigate_layout()
 
-    # Get screen dimensions for the visual watchdog
     screen_width, screen_height = pyautogui.size()
-
     print(f"Starting watchdog loop. Checking every {CHECK_INTERVAL} seconds...")
     
-    # --- THE WATCHDOG LOOP ---
     while True:
         time.sleep(CHECK_INTERVAL)
         
-        needs_refresh = False
+        needs_hard_restart = False
 
-        # Check 1: Did the Debian machine drop its WiFi connection?
         if not is_network_up():
             print("Network drop detected. Waiting for connection to return...")
-            # Pause the script here until the network comes back
             while not is_network_up():
                 time.sleep(5)
             print("Network restored!")
-            needs_refresh = True
+            needs_hard_restart = True
             
-        # Check 2: Did the Frigate UI time out while the network was fine?
-        elif is_ui_timed_out(screen_width, screen_height):
-            print("UI Timeout detected (Screen went black).")
-            needs_refresh = True
+        elif is_ui_crashed(screen_width, screen_height):
+            print("UI Crash or Timeout detected.")
+            needs_hard_restart = True
 
-        # If either check failed, refresh the browser and re-apply the layout
-        if needs_refresh:
-            print("Refreshing Vivaldi...")
-            # Click the screen to ensure Vivaldi is still the active window
-            pyautogui.click(screen_width - 5, screen_height - 5)
-            time.sleep(0.5)
-            
-            # Send F5 to refresh the page
-            pyautogui.press('f5')
-            
-            # Wait for the page to reload
-            print(f"Waiting {LOAD_DELAY}s for reload...")
-            time.sleep(LOAD_DELAY)
-            
-            # Re-apply your custom formatting
+        if needs_hard_restart:
+            print("Initiating Hard Recovery Protocol...")
+            kill_browser()
+            launch_browser()
             apply_frigate_layout()
 
 if __name__ == "__main__":
