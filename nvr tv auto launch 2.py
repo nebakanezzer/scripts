@@ -4,66 +4,56 @@ import time
 import pyautogui
 import os
 
-# frigate non-auth addy
-URL = "http://192.168.1.12:5000"
-LOAD_DELAY = 10 
+# Deep-link URL
+URL = "http://192.168.1.12:5000/cameras/living_room"
+LOAD_DELAY = 12 # Slightly longer to allow profile loading
 
 def main():
-    print("Cleaning up old Vivaldi processes...")
-    os.system("pkill -f vivaldi") 
-    time.sleep(2) 
+    print("Stopping existing Vivaldi instances...")
+    os.system("pkill -f vivaldi")
+    time.sleep(2)
 
-    # Get screen dimensions dynamically
     screen_width, screen_height = pyautogui.size()
 
-    print("Launching Vivaldi with forced geometry and clean profile...")
+    # We use a custom profile directory that IS NOT in /tmp.
+    # This ensures the browser RETAINS its settings/view between reboots.
+    profile_path = os.path.expanduser("~/.config/vivaldi_frigate_kiosk")
+
+    print(f"Launching Vivaldi with permanent profile at {profile_path}...")
     subprocess.Popen([
         "vivaldi", 
-        "--incognito", 
+        URL,
+        "--new-window",
         "--kiosk", 
         f"--window-size={screen_width},{screen_height}",
         "--window-position=0,0",
-        "--user-data-dir=/tmp/frigate_kiosk", 
-        URL
+        f"--user-data-dir={profile_path}"
     ])
 
-    print(f"Waiting {LOAD_DELAY}s for UI to render...")
+    print(f"Waiting {LOAD_DELAY}s for profile and page load...")
     time.sleep(LOAD_DELAY)
 
     # 1. INITIAL FOCUS (Safe Zone)
-    # We click the top-center of the screen (y=20 pixels down). 
-    # This hits the Frigate top navigation bar, guaranteeing we don't accidentally click a camera feed.
-    print("Clicking top navigation bar to ensure focus...")
     pyautogui.click(screen_width // 2, 20)
     time.sleep(1)
 
-    # 2. THE FAILSAFE: FORCE BROWSER FULLSCREEN
-    print("Pressing F11 failsafe...")
+    # 2. FULLSCREEN TRIGGER
+    # Since we aren't in incognito, once these are triggered, 
+    # the profile will likely remember them for next time.
     pyautogui.press('f11')
-    time.sleep(2)
-
-    # 3. TRIGGER FRIGATE FULLSCREEN
-    print("Sending 'f' for Frigate UI Fullscreen...")
+    time.sleep(1)
     pyautogui.press('f')
     
-    # 4. THE "STABILIZATION" PAUSE
-    time.sleep(4) 
-
-    # 5. SAFE SCROLLING (Replacing the Mouse Drag)
-    print("Scrolling down slightly using safe keystrokes...")
-    # Using the down arrow avoids clicking on cameras entirely. 
-    # Increase or decrease the range(3) number to scroll more or less.
-    for _ in range(3):
+    # 3. MINOR SCROLL
+    print("Adjusting view...")
+    for _ in range(2):
         pyautogui.press('down')
         time.sleep(0.2)
 
-    # 6. PARK THE MOUSE (Safely away from the taskbar)
-    # We park it on the far right edge, exactly halfway down the screen.
-    safe_park_x = screen_width - 10
-    safe_park_y = screen_height // 2
-    pyautogui.moveTo(safe_park_x, safe_park_y)
+    # 4. PARK MOUSE (Far right, middle height)
+    pyautogui.moveTo(screen_width - 10, screen_height // 2)
 
-    print("Done. Layout should be locked and safe.")
+    print("Done. Settings saved to permanent profile.")
 
 if __name__ == "__main__":
     main()
