@@ -92,22 +92,34 @@ def is_network_up():
 
 def is_ui_crashed(screen_width, screen_height):
     """
-    Checks if the screen is purely black (Frigate timeout) 
-    OR matches the Vivaldi 'Dead Bird' dark gray.
+    Checks multiple points to avoid the error text/graphics, 
+    and uses a tolerant check for the mid-gray background.
     """
-    r, g, b = pyautogui.pixel(int(screen_width / 2), int(screen_height / 2))
+    # Check 3 different spots: Top-Center, Left-Middle, Bottom-Right
+    points_to_check = [
+        (int(screen_width / 2), int(screen_height / 4)),      
+        (int(screen_width / 4), int(screen_height / 2)),      
+        (int(screen_width * 0.75), int(screen_height * 0.75)) 
+    ]
     
-    # Timeout = pure black
-    if r == 0 and g == 0 and b == 0:
-        print("Detected Black Screen (Timeout).")
-        return True
+    for x, y in points_to_check:
+        r, g, b = pyautogui.pixel(x, y)
         
-    # Dead Bird Screen = usually a uniform dark gray (around RGB 34,34,34 to 45,45,45 depending on theme)
-    # We check if red, green, and blue are perfectly equal and in that dark gray range.
-    if r == g and g == b and 20 <= r <= 50:
-        print(f"Detected Dead Bird Gray (RGB: {r},{g},{b}).")
-        return True
+        # 1. Timeout Check = Pure Black
+        if r == 0 and g == 0 and b == 0:
+            print(f"Detected Black Screen (Timeout) at {x},{y}.")
+            return True
+            
+        # 2. Dead Bird Check = Mid-Gray (Targeting ~128, 127, 128)
+        # First, ensure the colors are very close to each other (it is gray, not colored)
+        color_diff = max(abs(r-g), abs(r-b), abs(g-b))
         
+        # Second, ensure it's in the mid-gray range. 
+        # We allow a window from 115 to 140 to catch slight variations.
+        if color_diff <= 10 and 115 <= r <= 140 and 115 <= g <= 140 and 115 <= b <= 140:
+            print(f"Detected Dead Bird Gray at {x},{y} (RGB: {r},{g},{b}).")
+            return True
+            
     return False
 
 def main():
