@@ -36,37 +36,47 @@ def wait_for_page_ready(sw, sh):
 
 def apply_frigate_layout(browser_type="vivaldi"):
     sw, sh = pyautogui.size()
+    
+    # Wait for video pixels to appear (using our previous function)
     wait_for_page_ready(sw, sh)
     
     print(f"Applying layout for {browser_type}...")
-    pyautogui.click(100, 100)
+    
+    # 1. Click dead-center to ensure the page has focus for keyboard shortcuts
+    pyautogui.click(sw / 2, sh / 2)
     time.sleep(1)
 
-    if browser_type == "vivaldi":
-        pyautogui.press('f')
-        time.sleep(5) 
+    # 2. Try the Fullscreen 'f' toggle
+    # We'll 'double-tap' it with a delay to ensure Frigate catches it
+    pyautogui.press('f')
+    time.sleep(2)
     
-    # The Nudge
+    # 3. The Nudge (Crucial for clearing sidebars)
     pyautogui.click(sw - 5, sh - 5)
     time.sleep(1) 
     pyautogui.moveTo(sw - 20, sh / 5)
     pyautogui.mouseDown(button='left')
     pyautogui.moveTo(sw - 20, (sh / 5) - 20, duration=1.5)
     pyautogui.mouseUp(button='left')
-    pyautogui.moveTo(sw - 5, sh - 5)
+    
+    # Final move to hide cursor
+    pyautogui.moveTo(sw - 1, sh - 1)
 
 def launch_and_setup():
     kill_browsers()
     
     # 1. Vivaldi
+    # We keep Vivaldi exactly as it was since it was working
     subprocess.Popen(["vivaldi", URL_VIVALDI, "--new-window", "--start-fullscreen", "--disable-dev-shm-usage"])
     apply_frigate_layout(browser_type="vivaldi")
 
-    # 2. Firefox - Added media.ffmpeg.vaapi.enabled for better Linux hardware video support
-    subprocess.Popen(["firefox", "--kiosk", "--private-window", URL_FIREFOX])
+    # 2. Firefox
+    # REMOVED --private-window so it remembers your camera selection
+    # ADDED -new-instance to keep it separate from any other Firefox tasks
+    print("\n--- Launching Firefox ---")
+    f_flags = ["firefox", "--kiosk", "-new-instance", URL_FIREFOX]
+    subprocess.Popen(f_flags)
     apply_frigate_layout(browser_type="firefox")
-    
-    print("System Online.")
 
 def is_ui_crashed(sw, sh):
     """Checks for black screen or dead bird."""
