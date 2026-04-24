@@ -2,120 +2,98 @@
 import subprocess
 import time
 import pyautogui
-import urllib.request
-import urllib.error
 import os
 
 # Frigate URLs
 BASE_URL = "http://192.168.1.12:5000"
 URL_VIVALDI = "http://192.168.1.12:5000/cameras/Living_room"
-URL_FIREFOX = "http://192.168.1.12:5000/cameras/Living_room_2?toolbar=0"
+URL_FIREFOX = "http://192.168.1.12:5000/cameras/Living_room_2"
 
-LOAD_TIMEOUT = 30 
+# TIMING ADJUSTMENTS
+INITIAL_LOAD_WAIT = 15  
+NUDGE_DELAY = 5         
 SWITCH_INTERVAL = 10 
-# How many times to see a "black/gray" screen before killing the browser
-MAX_CRASH_SIGHTINGS = 3 
 
 def kill_browsers():
-    print("Cleaning up browser processes...")
+    print("Cleaning up processes...")
     os.system("killall -9 vivaldi-bin firefox firefox-bin > /dev/null 2>&1")
-    time.sleep(2)
+    time.sleep(3)
 
-def wait_for_page_ready(sw, sh):
-    print("Waiting for video pixels to appear...")
+def wait_for_video(sw, sh):
+    """Wait for the screen to stop being white/black/gray."""
+    print("Waiting for video feed to render...")
     start_time = time.time()
-    while time.time() - start_time < LOAD_TIMEOUT:
-        r, g, b = pyautogui.pixel(int(sw/2), int(sh/2))
-        # If it's NOT white, black, or dead-bird gray
-        if not (r > 240 and g > 240 and b > 240) and \
-           not (r == 0 and g == 0 and b == 0) and \
-           not (115 <= r <= 140):
+    while time.time() - start_time < 30:
+        # Check slightly off-center to avoid the black grid lines between the 9 cameras
+        r, g, b = pyautogui.pixel(int(sw/3), int(sh/3))
+        if not (r > 240 and g > 240 and b > 240) and not (r == 0 and g == 0 and b == 0) and not (115 <= r <= 140):
+            time.sleep(NUDGE_DELAY) 
             return True
-        time.sleep(2)
+        time.sleep(1)
+    print("Video wait timed out, proceeding anyway...")
     return False
 
-def apply_frigate_layout(browser_type="vivaldi"):
+def apply_frigate_layout(browser_name):
     sw, sh = pyautogui.size()
     
-    # Wait for video pixels to appear (using our previous function)
-    wait_for_page_ready(sw, sh)
+    # 1. Wait for video
+    wait_for_video(sw, sh)
     
-    print(f"Applying layout for {browser_type}...")
+    print(f"Applying layout to {browser_name}...")
     
-    # 1. Click dead-center to ensure the page has focus for keyboard shortcuts
-    pyautogui.click(sw / 2, sh / 2)
+    # 2. THE FIX: Force focus with a SAFE click (Bottom-Right Corner)
+    # This ensures we click the background/margins, NOT a camera feed.
+    pyautogui.click(sw - 5, sh - 5)
     time.sleep(1)
 
-    # 2. Try the Fullscreen 'f' toggle
-    # We'll 'double-tap' it with a delay to ensure Frigate catches it
+    # 3. Toggle Frigate Fullscreen
     pyautogui.press('f')
-    time.sleep(2)
-    
-    # 3. The Nudge (Crucial for clearing sidebars)
+    time.sleep(5) 
+
+    # 4. The Nudge
     pyautogui.click(sw - 5, sh - 5)
     time.sleep(1) 
     pyautogui.moveTo(sw - 20, sh / 5)
     pyautogui.mouseDown(button='left')
     pyautogui.moveTo(sw - 20, (sh / 5) - 20, duration=1.5)
     pyautogui.mouseUp(button='left')
-    
-    # Final move to hide cursor
     pyautogui.moveTo(sw - 1, sh - 1)
+    print(f"{browser_name} ready.")
 
 def launch_and_setup():
     kill_browsers()
     
-    # 1. Vivaldi
-    # We keep Vivaldi exactly as it was since it was working
+    # --- VIVALDI PHASE ---
+    print("\n--- Phase 1: Vivaldi ---")
     subprocess.Popen(["vivaldi", URL_VIVALDI, "--new-window", "--start-fullscreen", "--disable-dev-shm-usage"])
-    apply_frigate_layout(browser_type="vivaldi")
+    time.sleep(INITIAL_LOAD_WAIT)
+    apply_frigate_layout("Vivaldi")
 
-    # 2. Firefox
-    # REMOVED --private-window so it remembers your camera selection
-    # ADDED -new-instance to keep it separate from any other Firefox tasks
-    print("\n--- Launching Firefox ---")
-    f_flags = ["firefox", "--kiosk", "-new-instance", URL_FIREFOX]
-    subprocess.Popen(f_flags)
-    apply_frigate_layout(browser_type="firefox")
-
-def is_ui_crashed(sw, sh):
-    """Checks for black screen or dead bird."""
-    points = [(int(sw/2), int(sh/4)), (int(sw/4), int(sh/2)), (int(sw*0.75), int(sh*0.75))]
-    for x, y in points:
-        r, g, b = pyautogui.pixel(x, y)
-        if r == 0 and g == 0 and b == 0: return True
-        diff = max(abs(r-g), abs(r-b), abs(g-b))
-        if diff <= 10 and 115 <= r <= 140: return True 
-    return False
+    # --- FIREFOX PHASE ---
+    print("\n--- Phase 2: Firefox ---")
+    subprocess.Popen(["firefox", "--kiosk", URL_FIREFOX])
+    time.sleep(INITIAL_LOAD_WAIT)
+    apply_frigate_layout("Firefox")
+    
+    print("\n--- All Systems Ready. Entering Loop. ---")
 
 def main():
-    launch_and_setup()
     sw, sh = pyautogui.size()
-    
-    crash_counter = 0
+    launch_and_setup()
     
     while True:
+        print(f"Viewing current camera ({SWITCH_INTERVAL}s)...")
         time.sleep(SWITCH_INTERVAL)
-        pyautogui.hotkey('alt', 'tab')
-        time.sleep(3) 
         
-        if is_ui_crashed(sw, sh):
-            crash_counter += 1
-            print(f"Warning: Potential stale stream detected ({crash_counter}/{MAX_CRASH_SIGHTINGS})")
-            
-            # Soft Recovery: Just refresh the page instead of killing everything
-            pyautogui.hotkey('ctrl', 'r') 
-            time.sleep(5) 
-            
-            if crash_counter >= MAX_CRASH_SIGHTINGS:
-                print("Hard Recovery: Browser is stuck. Relaunching...")
-                launch_and_setup()
-                crash_counter = 0
-        else:
-            # If we see a good frame, reset the counter completely
-            if crash_counter > 0:
-                print("Stream recovered. Resetting watchdog.")
-            crash_counter = 0
+        print("Switching windows...")
+        pyautogui.hotkey('alt', 'tab')
+        time.sleep(4) 
+        
+        # Health check: off-center check for the dead bird
+        r, g, b = pyautogui.pixel(int(sw/3), int(sh/3))
+        if 115 <= r <= 140 and 115 <= g <= 140:
+            print("Crash detected! Restarting setup...")
+            launch_and_setup()
 
 if __name__ == "__main__":
     main()
