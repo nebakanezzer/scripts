@@ -4,96 +4,95 @@ import time
 import pyautogui
 import os
 
-# Frigate URLs
-BASE_URL = "http://192.168.1.12:5000"
+# Titles from your wmctrl -l output
+TITLE_VIVALDI = "with camera"
+TITLE_FIREFOX = "mozilla firefox"
+
 URL_VIVALDI = "http://192.168.1.12:5000/cameras/Living_room"
 URL_FIREFOX = "http://192.168.1.12:5000/cameras/Living_room_2"
 
-# TIMING ADJUSTMENTS
-INITIAL_LOAD_WAIT = 15  
-NUDGE_DELAY = 5         
-SWITCH_INTERVAL = 10 
+# TIMING - Higher delays for 4K stability
+LOAD_WAIT = 20
+SETTLE_WAIT = 8 
 
 def kill_browsers():
-    print("Cleaning up processes...")
+    print("Force cleaning environment...")
     os.system("killall -9 vivaldi-bin firefox firefox-bin > /dev/null 2>&1")
     time.sleep(3)
 
-def wait_for_video(sw, sh):
-    """Wait for the screen to stop being white/black/gray."""
-    print("Waiting for video feed to render...")
-    start_time = time.time()
-    while time.time() - start_time < 30:
-        # Check slightly off-center to avoid the black grid lines between the 9 cameras
-        r, g, b = pyautogui.pixel(int(sw/3), int(sh/3))
-        if not (r > 240 and g > 240 and b > 240) and not (r == 0 and g == 0 and b == 0) and not (115 <= r <= 140):
-            time.sleep(NUDGE_DELAY) 
-            return True
-        time.sleep(1)
-    print("Video wait timed out, proceeding anyway...")
-    return False
+def switch_windows(target_title):
+    """Uses the exact title substrings from your wmctrl output."""
+    print(f"OS: Focusing window containing '{target_title}'...")
+    os.system(f"wmctrl -a '{target_title}'")
 
 def apply_frigate_layout(browser_name):
     sw, sh = pyautogui.size()
-    
-    # 1. Wait for video
-    wait_for_video(sw, sh)
-    
     print(f"Applying layout to {browser_name}...")
     
-    # 2. THE FIX: Force focus with a SAFE click (Bottom-Right Corner)
-    # This ensures we click the background/margins, NOT a camera feed.
-    pyautogui.click(sw - 5, sh - 5)
-    time.sleep(1)
+    # 1. Click to gain focus (Top edge, center)
+    pyautogui.click(sw / 2, 10)
+    time.sleep(2)
 
-    # 3. Toggle Frigate Fullscreen
+    # 2. Toggle Fullscreen
+    if "firefox" in browser_name.lower():
+        print("Sending F11 to Firefox...")
+        pyautogui.press('f11')
+        time.sleep(3)
+    
+    print(f"Sending 'f' to {browser_name}...")
     pyautogui.press('f')
-    time.sleep(5) 
+    
+    # 3. CRITICAL: Wait for the zoom animation to finish completely
+    print(f"Waiting {SETTLE_WAIT}s for animation to settle...")
+    time.sleep(SETTLE_WAIT)
 
-    # 4. The Nudge
-    pyautogui.click(sw - 5, sh - 5)
-    time.sleep(1) 
-    pyautogui.moveTo(sw - 20, sh / 5)
+    # 4. The Nudge (Extreme right edge)
+    print(f"Executing nudge for {browser_name}...")
+    pyautogui.moveTo(sw - 2, sh / 4)
     pyautogui.mouseDown(button='left')
-    pyautogui.moveTo(sw - 20, (sh / 5) - 20, duration=1.5)
+    pyautogui.moveTo(sw - 2, (sh / 4) - 60, duration=1.5)
     pyautogui.mouseUp(button='left')
     pyautogui.moveTo(sw - 1, sh - 1)
-    print(f"{browser_name} ready.")
 
 def launch_and_setup():
     kill_browsers()
     
-    # --- VIVALDI PHASE ---
-    print("\n--- Phase 1: Vivaldi ---")
-    subprocess.Popen(["vivaldi", URL_VIVALDI, "--new-window", "--start-fullscreen", "--disable-dev-shm-usage"])
-    time.sleep(INITIAL_LOAD_WAIT)
+    # --- VIVALDI ---
+    print("\n--- Initializing Vivaldi ---")
+    v_flags = ["vivaldi", f"--app={URL_VIVALDI}", "--start-fullscreen", "--no-first-run"]
+    subprocess.Popen(v_flags)
+    time.sleep(LOAD_WAIT)
     apply_frigate_layout("Vivaldi")
 
-    # --- FIREFOX PHASE ---
-    print("\n--- Phase 2: Firefox ---")
-    subprocess.Popen(["firefox", "--kiosk", URL_FIREFOX])
-    time.sleep(INITIAL_LOAD_WAIT)
+    # --- FIREFOX ---
+    print("\n--- Initializing Firefox ---")
+    # Launching normally to allow wmctrl to see 'mozilla firefox' in title
+    subprocess.Popen(["firefox", "--new-window", URL_FIREFOX])
+    time.sleep(LOAD_WAIT)
     apply_frigate_layout("Firefox")
     
-    print("\n--- All Systems Ready. Entering Loop. ---")
+    print("\n--- All setups complete. Entering Loop. ---")
 
 def main():
-    sw, sh = pyautogui.size()
     launch_and_setup()
     
+    # Start the loop
+    current_in_front = "Firefox"
+    
     while True:
-        print(f"Viewing current camera ({SWITCH_INTERVAL}s)...")
-        time.sleep(SWITCH_INTERVAL)
+        print(f"Displaying {current_in_front}. Waiting 10s...")
+        time.sleep(10)
         
-        print("Switching windows...")
-        pyautogui.hotkey('alt', 'tab')
-        time.sleep(4) 
+        # Toggle and Switch
+        if current_in_front == "Firefox":
+            switch_windows(TITLE_VIVALDI)
+            current_in_front = "Vivaldi"
+        else:
+            switch_windows(TITLE_FIREFOX)
+            current_in_front = "Firefox"
         
-        # Health check: off-center check for the dead bird
-        r, g, b = pyautogui.pixel(int(sw/3), int(sh/3))
-        if 115 <= r <= 140 and 115 <= g <= 140:
-            print("Crash detected! Restarting setup...")
-            launch_and_setup()
+        # Give the OS a moment to bring the window forward before the next loop
+        time.sleep(2)
 
 if __name__ == "__main__":
     main()
