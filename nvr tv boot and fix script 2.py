@@ -143,9 +143,12 @@ def switch_to(icon_coords, cam_name, press_back=False):
         print(f"[Cycle] Pressing Alt+Left to reach live stream...")
         hotkey('alt', 'left')
         time.sleep(BACK_WAIT)
+        # Page already has focus after back navigation — do NOT click_center()
+        # here as clicking the video feed triggers Frigate detail/clip navigation
+    else:
+        click_center()
 
     # Re-maximize
-    click_center()
     press('f')
     time.sleep(FRIGATE_WAIT)
 
