@@ -149,7 +149,10 @@ def switch_to(icon_coords, cam_name, press_back=False):
 
     # Re-maximize
     press('f')
-    time.sleep(FRIGATE_WAIT)
+    # Extra wait for Living_room: the back-navigation path needs more time
+    # for Frigate's expand animation to fully settle before scroll registers
+    extra_wait = 8 if press_back else 0
+    time.sleep(FRIGATE_WAIT + extra_wait)
 
     # Move mouse to centre (no click) then scroll — clicking here would
     # trigger Frigate detail navigation on Living_room's layout
