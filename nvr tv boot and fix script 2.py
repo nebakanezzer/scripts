@@ -30,8 +30,8 @@ pyautogui.FAILSAFE = False
 URL_START = "http://192.168.1.12:5000/cameras/Living_room"
 
 # Paste coordinates from find_coords.py here
-ICON_CAM1 = (45, 300)   # Living_room      ← replace
-ICON_CAM2 = (45, 380)   # Living_room_2    ← replace
+ICON_CAM1 = (24, 265)   # Living_room      ← replace
+ICON_CAM2 = (25, 291)   # Living_room_2    ← replace
 
 LOAD_WAIT    = 25   # seconds to wait for Vivaldi + stream on launch
 FRIGATE_WAIT = 2    # seconds after pressing 'f' for Frigate animation
