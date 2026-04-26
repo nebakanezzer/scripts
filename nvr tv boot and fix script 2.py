@@ -5,11 +5,10 @@ camera_cycle.py — single-browser Frigate camera cycling script.
 Cycles between two cameras by:
   1. Press 'f' to de-maximize (shows Frigate sidebar)
   2. Click the sidebar icon for the next camera
-  3. [For Living_room only] Press Alt+Left to go back to the live stream view
+  3. [For Living_room only] Press Alt+Left to reach the live stream view
   4. Press 'f' to re-maximize
-  5. Wait CYCLE_WAIT seconds, then repeat
-
-Run find_coords.py once to get ICON_CAM1 / ICON_CAM2 coordinates.
+  5. Move mouse to centre (no click) then scroll down to centre the view
+  6. Wait CYCLE_WAIT seconds, then repeat
 """
 
 import os
@@ -29,14 +28,13 @@ pyautogui.FAILSAFE = False
 
 URL_START = "http://192.168.1.12:5000/cameras/Living_room"
 
-# Paste coordinates from find_coords.py here
-ICON_CAM1 = (24, 265)   # Living_room      ← replace
-ICON_CAM2 = (25, 291)   # Living_room_2    ← replace
+ICON_CAM1 = (24, 265)   # Living_room
+ICON_CAM2 = (25, 291)   # Living_room_2
 
 LOAD_WAIT    = 25   # seconds to wait for Vivaldi + stream on launch
 FRIGATE_WAIT = 2    # seconds after pressing 'f' for Frigate animation
 SIDEBAR_WAIT = 1    # seconds after sidebar appears before clicking
-BACK_WAIT    = 2    # seconds after pressing back before pressing 'f'
+BACK_WAIT    = 2    # seconds after pressing Alt+Left before pressing 'f'
 CYCLE_WAIT   = 20   # seconds each camera is shown fullscreen
 
 
@@ -53,9 +51,17 @@ def hotkey(*keys):
 
 
 def click_center():
+    """Click centre — only used when we need to hand JS focus to the page."""
     w, h = pyautogui.size()
     pyautogui.click(w // 2, h // 2)
     time.sleep(0.5)
+
+
+def move_to_center():
+    """Move mouse to centre WITHOUT clicking — positions cursor for scroll."""
+    w, h = pyautogui.size()
+    pyautogui.moveTo(w // 2, h // 2, duration=0.2)
+    time.sleep(0.3)
 
 
 def click_icon(coords):
@@ -111,7 +117,7 @@ def launch_and_setup():
     time.sleep(FRIGATE_WAIT)
 
     print("Scrolling down to centre view...")
-    click_center()
+    move_to_center()
     scroll_down(4)
 
     park_mouse()
@@ -121,39 +127,33 @@ def launch_and_setup():
 # ── Cycle ─────────────────────────────────────────────────────────────────────────
 
 def switch_to(icon_coords, cam_name, press_back=False):
-    """
-    De-maximize → click sidebar icon → optional back → re-maximize → scroll.
-
-    press_back=True: press Alt+Left after clicking the icon to return to the
-    live stream view. Needed for Living_room because its sidebar icon navigates
-    to a detail/sub-page rather than the live stream directly.
-    """
     print(f"[Cycle] Switching to {cam_name}...")
 
     # De-maximize to reveal sidebar
     press('f')
     time.sleep(FRIGATE_WAIT + SIDEBAR_WAIT)
 
-    # Click the camera icon
+    # Click the camera icon in the sidebar
     click_icon(icon_coords)
     time.sleep(1.5)
 
-    # Go back to the live stream if the icon lands on a sub-page
     if press_back:
+        # Icon navigates to a sub-page; go back to reach the live stream
         print(f"[Cycle] Pressing Alt+Left to reach live stream...")
         hotkey('alt', 'left')
         time.sleep(BACK_WAIT)
-        # Page already has focus after back navigation — do NOT click_center()
-        # here as clicking the video feed triggers Frigate detail/clip navigation
+        # Page already has focus after back — no click needed before 'f'
     else:
+        # Give the page JS focus so 'f' reaches Frigate's keyboard handler
         click_center()
 
     # Re-maximize
     press('f')
     time.sleep(FRIGATE_WAIT)
 
-    # Scroll into position
-    click_center()
+    # Move mouse to centre (no click) then scroll — clicking here would
+    # trigger Frigate detail navigation on Living_room's layout
+    move_to_center()
     scroll_down(4)
 
     park_mouse()
@@ -165,11 +165,9 @@ def switch_to(icon_coords, cam_name, press_back=False):
 def main():
     launch_and_setup()
 
-    # CAM1 (Living_room) is already showing after setup.
-    # Cycle order: switch to CAM2, then back to CAM1, repeat.
     cameras = [
-        ("Living_room_2", ICON_CAM2, False),   # sidebar nav works fine
-        ("Living_room",   ICON_CAM1, True),    # needs Alt+Left after icon click
+        ("Living_room_2", ICON_CAM2, False),
+        ("Living_room",   ICON_CAM1, True),
     ]
     idx = 0
 
