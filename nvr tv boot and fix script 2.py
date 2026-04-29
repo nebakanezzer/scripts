@@ -39,11 +39,11 @@ ICON_CAM2 = (25, 291)   # Living_room_2
 SAFE_X = 24
 SAFE_Y = 100
 
-LOAD_WAIT           = 25   # seconds after launching Vivaldi
-FRIGATE_WAIT        = 2    # seconds after pressing 'f'
+LOAD_WAIT           = 20   # seconds after launching Vivaldi
+FRIGATE_WAIT        = 1    # seconds after pressing 'f'
 SIDEBAR_WAIT        = 1    # seconds after sidebar appears before clicking
-BACK_WAIT           = 2    # seconds after Alt+Left
-SCROLL_WAIT         = 8    # extra settle time before scroll on Living_room
+BACK_WAIT           = 1    # seconds after Alt+Left
+SCROLL_WAIT         = 4    # extra settle time before scroll on Living_room
 CYCLE_WAIT          = 20   # seconds each camera is shown
 CHECK_INTERVAL      = 15   # watchdog poll interval
 CRASH_CONFIRM_COUNT = 3    # consecutive failures required before hard restart
