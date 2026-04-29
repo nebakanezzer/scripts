@@ -2,43 +2,66 @@
 """
 camera_cycle.py — single-browser Frigate camera cycling script.
 
-Cycles between two cameras by:
-  1. Press 'f' to de-maximize (shows Frigate sidebar)
-  2. Click the sidebar icon for the next camera
-  3. [For Living_room only] Press Alt+Left to reach the live stream view
-  4. Press 'f' to re-maximize
-  5. Move mouse to centre (no click) then scroll down to centre the view
-  6. Wait CYCLE_WAIT seconds, then repeat
+Fixes in this version:
+  1. Wipe Vivaldi kiosk session files before launch so it always loads
+     URL_START (Living_room) instead of restoring the last session.
+  2. Scroll only fires during initial setup (Living_room), never on
+     Living_room_2 where it doesn't belong.
+  3. Watchdog requires CRASH_CONFIRM_COUNT consecutive failures before
+     triggering a hard restart, preventing false positives from dark
+     video frames momentarily matching the black-screen signature.
 """
 
 import os
 
-# Must be set BEFORE importing pyautogui
 os.environ.setdefault("DISPLAY", ":0")
 os.environ.setdefault("XAUTHORITY", os.path.expanduser("~/.Xauthority"))
 
 import subprocess
 import time
-import sys
+import urllib.request
+import urllib.error
 import pyautogui
 
 pyautogui.FAILSAFE = False
 
 # ── Config ───────────────────────────────────────────────────────────────────────
 
-URL_START = "http://192.168.1.12:5000/cameras/Living_room"
+URL_START   = "http://192.168.1.12:5000/cameras/Living_room"
+URL_NETWORK = "http://192.168.1.12:5000"
+
+VIVALDI_KIOSK_DIR = "/home/warmachine/.config/vivaldi-kiosk"
 
 ICON_CAM1 = (24, 265)   # Living_room
 ICON_CAM2 = (25, 291)   # Living_room_2
 
-LOAD_WAIT    = 25   # seconds to wait for Vivaldi + stream on launch
-FRIGATE_WAIT = 2    # seconds after pressing 'f' for Frigate animation
-SIDEBAR_WAIT = 1    # seconds after sidebar appears before clicking
-BACK_WAIT    = 2    # seconds after pressing Alt+Left before pressing 'f'
-CYCLE_WAIT   = 20   # seconds each camera is shown fullscreen
+# Safe zone: top of left sidebar, above first camera icon (y=265).
+SAFE_X = 24
+SAFE_Y = 100
+
+LOAD_WAIT           = 25   # seconds after launching Vivaldi
+FRIGATE_WAIT        = 2    # seconds after pressing 'f'
+SIDEBAR_WAIT        = 1    # seconds after sidebar appears before clicking
+BACK_WAIT           = 2    # seconds after Alt+Left
+SCROLL_WAIT         = 8    # extra settle time before scroll on Living_room
+CYCLE_WAIT          = 20   # seconds each camera is shown
+CHECK_INTERVAL      = 15   # watchdog poll interval
+CRASH_CONFIRM_COUNT = 3    # consecutive failures required before hard restart
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────────
+
+def safe_mouse():
+    pyautogui.moveTo(SAFE_X, SAFE_Y, duration=0.2)
+    time.sleep(0.3)
+
+
+def press_f():
+    """Always move to safe zone before pressing 'f'."""
+    safe_mouse()
+    pyautogui.press('f')
+    time.sleep(0.5)
+
 
 def press(key):
     pyautogui.press(key)
@@ -50,18 +73,16 @@ def hotkey(*keys):
     time.sleep(0.5)
 
 
-def click_center():
-    """Click centre — only used when we need to hand JS focus to the page."""
-    w, h = pyautogui.size()
-    pyautogui.click(w // 2, h // 2)
-    time.sleep(0.5)
-
-
 def move_to_center():
-    """Move mouse to centre WITHOUT clicking — positions cursor for scroll."""
     w, h = pyautogui.size()
     pyautogui.moveTo(w // 2, h // 2, duration=0.2)
     time.sleep(0.3)
+
+
+def scroll_down(ticks=4):
+    for _ in range(ticks):
+        pyautogui.scroll(-1)
+        time.sleep(0.2)
 
 
 def click_icon(coords):
@@ -71,95 +92,163 @@ def click_icon(coords):
     time.sleep(0.5)
 
 
-def scroll_down(ticks=4):
-    for _ in range(ticks):
-        pyautogui.scroll(-1)
-        time.sleep(0.2)
-
-
-def park_mouse():
-    w, h = pyautogui.size()
-    pyautogui.moveTo(w - 1, h - 1)
-
-
 def kill_browsers():
     print("Killing browsers...")
     os.system("killall -9 vivaldi-bin firefox firefox-bin 2>/dev/null")
     time.sleep(3)
 
 
+def wipe_vivaldi_session():
+    """
+    Delete Vivaldi's saved session files so it always starts fresh at
+    URL_START rather than restoring the last visited page.
+    """
+    session_files = [
+        "Current Session", "Current Tabs",
+        "Last Session",    "Last Tabs",
+    ]
+    profile_dir = os.path.join(VIVALDI_KIOSK_DIR, "Default")
+    for fname in session_files:
+        fpath = os.path.join(profile_dir, fname)
+        if os.path.exists(fpath):
+            os.remove(fpath)
+            print(f"  Wiped: {fpath}")
+
+
+# ── Watchdog ──────────────────────────────────────────────────────────────────────
+
+def is_network_up():
+    try:
+        urllib.request.urlopen(URL_NETWORK, timeout=5)
+        return True
+    except (urllib.error.URLError, TimeoutError):
+        return False
+
+
+def is_ui_crashed():
+    """
+    Sample three screen positions for crash signatures.
+    Only returns True if a suspect pixel is found — caller must confirm
+    across multiple consecutive calls (CRASH_CONFIRM_COUNT) to avoid
+    false positives from dark video frames.
+    """
+    w, h = pyautogui.size()
+    points = [
+        (w // 2,        h // 4),
+        (w // 4,        h // 2),
+        (int(w * 0.75), int(h * 0.75)),
+    ]
+    for x, y in points:
+        r, g, b = pyautogui.pixel(x, y)
+        if r == 0 and g == 0 and b == 0:
+            print(f"  Watchdog: black pixel at ({x},{y}).")
+            return True
+        color_diff = max(abs(r - g), abs(r - b), abs(g - b))
+        if color_diff <= 10 and 115 <= r <= 140:
+            print(f"  Watchdog: gray pixel at ({x},{y}) RGB({r},{g},{b}).")
+            return True
+    return False
+
+
+def watchdog_wait(seconds):
+    """
+    Wait for `seconds`, polling every CHECK_INTERVAL.
+    Requires CRASH_CONFIRM_COUNT consecutive crash detections before
+    returning True — prevents dark video frames causing false restarts.
+    """
+    deadline = time.time() + seconds
+    crash_streak = 0
+
+    while time.time() < deadline:
+        chunk = min(CHECK_INTERVAL, deadline - time.time())
+        time.sleep(chunk)
+
+        # Network check — single failure is enough (it's unambiguous)
+        if not is_network_up():
+            print("[Watchdog] Network down — waiting for recovery...")
+            while not is_network_up():
+                time.sleep(5)
+            print("[Watchdog] Network restored — hard restart.")
+            return True
+
+        # Crash check — require consecutive confirmations
+        if is_ui_crashed():
+            crash_streak += 1
+            print(f"  Watchdog: crash streak {crash_streak}/{CRASH_CONFIRM_COUNT}")
+            if crash_streak >= CRASH_CONFIRM_COUNT:
+                print("[Watchdog] Crash confirmed — hard restart.")
+                return True
+        else:
+            crash_streak = 0
+
+    return False
+
+
 # ── Startup ───────────────────────────────────────────────────────────────────────
 
 def launch_and_setup():
     kill_browsers()
+    wipe_vivaldi_session()
 
-    print(f"Launching Vivaldi, waiting {LOAD_WAIT}s...")
+    print(f"Launching Vivaldi at {URL_START}, waiting {LOAD_WAIT}s...")
     subprocess.Popen([
         "vivaldi",
         "--new-window",
         "--no-first-run",
         "--password-store=basic",
         "--disable-default-browser-check",
-        "--user-data-dir=/home/warmachine/.config/vivaldi-kiosk",
+        f"--user-data-dir={VIVALDI_KIOSK_DIR}",
         URL_START,
     ])
     time.sleep(LOAD_WAIT)
 
     print("Pressing f11 for OS fullscreen...")
+    safe_mouse()
     press('f11')
     time.sleep(3.5)
 
-    print("Clicking page for JS focus...")
-    click_center()
-
     print("Pressing 'f' for Frigate expand...")
-    press('f')
+    press_f()
     time.sleep(FRIGATE_WAIT)
 
-    print("Scrolling down to centre view...")
+    # Scroll only on Living_room (the always-first view after a clean launch)
+    print("Scrolling to centre Living_room view...")
+    time.sleep(SCROLL_WAIT)
     move_to_center()
     scroll_down(4)
 
-    park_mouse()
-    print("Setup complete. Starting cycle loop.\n")
+    safe_mouse()
+    print("Setup complete.\n")
 
 
 # ── Cycle ─────────────────────────────────────────────────────────────────────────
 
-def switch_to(icon_coords, cam_name, press_back=False):
+def switch_to(icon_coords, cam_name, press_back=False, scroll=False):
     print(f"[Cycle] Switching to {cam_name}...")
 
     # De-maximize to reveal sidebar
-    press('f')
+    press_f()
     time.sleep(FRIGATE_WAIT + SIDEBAR_WAIT)
 
-    # Click the camera icon in the sidebar
+    # Click sidebar icon
     click_icon(icon_coords)
     time.sleep(1.5)
 
     if press_back:
-        # Icon navigates to a sub-page; go back to reach the live stream
-        print(f"[Cycle] Pressing Alt+Left to reach live stream...")
+        print("[Cycle] Pressing Alt+Left to reach live stream...")
         hotkey('alt', 'left')
         time.sleep(BACK_WAIT)
-        # Page already has focus after back — no click needed before 'f'
-    else:
-        # Give the page JS focus so 'f' reaches Frigate's keyboard handler
-        click_center()
 
     # Re-maximize
-    press('f')
-    # Extra wait for Living_room: the back-navigation path needs more time
-    # for Frigate's expand animation to fully settle before scroll registers
-    extra_wait = 8 if press_back else 0
-    time.sleep(FRIGATE_WAIT + extra_wait)
+    press_f()
+    time.sleep(FRIGATE_WAIT)
 
-    # Move mouse to centre (no click) then scroll — clicking here would
-    # trigger Frigate detail navigation on Living_room's layout
-    move_to_center()
-    scroll_down(4)
+    if scroll:
+        time.sleep(SCROLL_WAIT)
+        move_to_center()
+        scroll_down(4)
 
-    park_mouse()
+    safe_mouse()
     print(f"[Cycle] Now showing {cam_name}.")
 
 
@@ -169,17 +258,23 @@ def main():
     launch_and_setup()
 
     cameras = [
-        ("Living_room_2", ICON_CAM2, False),
-        ("Living_room",   ICON_CAM1, True),
+        ("Living_room_2", ICON_CAM2, False, False),
+        ("Living_room",   ICON_CAM1, True,  True),
     ]
     idx = 0
 
     while True:
         print(f"[Loop] Waiting {CYCLE_WAIT}s...")
-        time.sleep(CYCLE_WAIT)
+        needs_restart = watchdog_wait(CYCLE_WAIT)
 
-        name, icon, needs_back = cameras[idx]
-        switch_to(icon, name, press_back=needs_back)
+        if needs_restart:
+            print("[Loop] Hard restart...")
+            launch_and_setup()
+            idx = 0
+            continue
+
+        name, icon, needs_back, do_scroll = cameras[idx]
+        switch_to(icon, name, press_back=needs_back, scroll=do_scroll)
         idx = (idx + 1) % len(cameras)
 
 
