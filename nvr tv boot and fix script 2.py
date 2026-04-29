@@ -48,6 +48,10 @@ CYCLE_WAIT          = 20   # seconds each camera is shown
 CHECK_INTERVAL      = 15   # watchdog poll interval
 CRASH_CONFIRM_COUNT = 3    # consecutive failures required before hard restart
 
+# Exact pixel coordinate of the flat black area of the Vivaldi dead bird icon.
+DEAD_BIRD_X = 945
+DEAD_BIRD_Y = 630
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────────
 
