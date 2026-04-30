@@ -2,14 +2,9 @@
 """
 camera_cycle.py — single-browser Frigate camera cycling script.
 
-Fixes in this version:
-  1. Wipe Vivaldi kiosk session files before launch so it always loads
-     URL_START (Living_room) instead of restoring the last session.
-  2. Scroll only fires during initial setup (Living_room), never on
-     Living_room_2 where it doesn't belong.
-  3. Watchdog requires CRASH_CONFIRM_COUNT consecutive failures before
-     triggering a hard restart, preventing false positives from dark
-     video frames momentarily matching the black-screen signature.
+Crash recovery is handled by systemd Restart=always — no pixel-based crash
+detection needed. The watchdog only handles network outages, pausing the
+cycle until Frigate is reachable again rather than cycling broken streams.
 """
 
 import os
@@ -36,21 +31,18 @@ ICON_CAM1 = (24, 265)   # Living_room
 ICON_CAM2 = (25, 291)   # Living_room_2
 
 # Safe zone: top of left sidebar, above first camera icon (y=265).
+# Cursor must be here before every 'f' press — Frigate maximizes whichever
+# camera tile the cursor is over, so it must never be over a tile.
 SAFE_X = 24
 SAFE_Y = 100
 
-LOAD_WAIT           = 20   # seconds after launching Vivaldi
-FRIGATE_WAIT        = 1    # seconds after pressing 'f'
-SIDEBAR_WAIT        = 1    # seconds after sidebar appears before clicking
-BACK_WAIT           = 1    # seconds after Alt+Left
-SCROLL_WAIT         = 4    # extra settle time before scroll on Living_room
-CYCLE_WAIT          = 20   # seconds each camera is shown
-CHECK_INTERVAL      = 15   # watchdog poll interval
-CRASH_CONFIRM_COUNT = 3    # consecutive failures required before hard restart
-
-# Exact pixel coordinate of the flat black area of the Vivaldi dead bird icon.
-DEAD_BIRD_X = 945
-DEAD_BIRD_Y = 630
+LOAD_WAIT      = 20   # seconds after launching Vivaldi
+FRIGATE_WAIT   = 1    # seconds after pressing 'f'
+SIDEBAR_WAIT   = 1    # seconds after sidebar appears before clicking
+BACK_WAIT      = 1    # seconds after Alt+Left
+SCROLL_WAIT    = 4    # extra settle time before scroll on Living_room
+CYCLE_WAIT     = 20   # seconds each camera is shown
+CHECK_INTERVAL = 15   # network watchdog poll interval
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────────
@@ -119,7 +111,7 @@ def wipe_vivaldi_session():
             print(f"  Wiped: {fpath}")
 
 
-# ── Watchdog ──────────────────────────────────────────────────────────────────────
+# ── Network watchdog ──────────────────────────────────────────────────────────────
 
 def is_network_up():
     try:
@@ -129,61 +121,23 @@ def is_network_up():
         return False
 
 
-def is_ui_crashed():
-    """
-    Sample three screen positions for crash signatures.
-    Only returns True if a suspect pixel is found — caller must confirm
-    across multiple consecutive calls (CRASH_CONFIRM_COUNT) to avoid
-    false positives from dark video frames.
-    """
-    w, h = pyautogui.size()
-    points = [
-        (w // 2,        h // 4),
-        (w // 4,        h // 2),
-        (int(w * 0.75), int(h * 0.75)),
-    ]
-    for x, y in points:
-        r, g, b = pyautogui.pixel(x, y)
-        if r == 0 and g == 0 and b == 0:
-            print(f"  Watchdog: black pixel at ({x},{y}).")
-            return True
-        color_diff = max(abs(r - g), abs(r - b), abs(g - b))
-        if color_diff <= 10 and 115 <= r <= 140:
-            print(f"  Watchdog: gray pixel at ({x},{y}) RGB({r},{g},{b}).")
-            return True
-    return False
-
-
 def watchdog_wait(seconds):
     """
-    Wait for `seconds`, polling every CHECK_INTERVAL.
-    Requires CRASH_CONFIRM_COUNT consecutive crash detections before
-    returning True — prevents dark video frames causing false restarts.
+    Wait for `seconds` total, checking network every CHECK_INTERVAL.
+    If Frigate goes offline, block here until it comes back — no point
+    cycling between two broken streams.
+    Does not check for crashes — systemd Restart=always handles those.
     """
     deadline = time.time() + seconds
-    crash_streak = 0
-
     while time.time() < deadline:
         chunk = min(CHECK_INTERVAL, deadline - time.time())
         time.sleep(chunk)
 
-        # Network check — single failure is enough (it's unambiguous)
         if not is_network_up():
-            print("[Watchdog] Network down — waiting for recovery...")
+            print("[Watchdog] Frigate unreachable — waiting for recovery...")
             while not is_network_up():
                 time.sleep(5)
-            print("[Watchdog] Network restored — hard restart.")
-            return True
-
-        # Crash check — require consecutive confirmations
-        if is_ui_crashed():
-            crash_streak += 1
-            print(f"  Watchdog: crash streak {crash_streak}/{CRASH_CONFIRM_COUNT}")
-            if crash_streak >= CRASH_CONFIRM_COUNT:
-                print("[Watchdog] Crash confirmed — hard restart.")
-                return True
-        else:
-            crash_streak = 0
+            print("[Watchdog] Frigate back online.")
 
     return False
 
@@ -194,7 +148,7 @@ def launch_and_setup():
     kill_browsers()
     wipe_vivaldi_session()
 
-    print(f"Launching Vivaldi at {URL_START}, waiting {LOAD_WAIT}s...")
+    print(f"Launching Vivaldi, waiting {LOAD_WAIT}s...")
     subprocess.Popen([
         "vivaldi",
         "--new-window",
@@ -215,7 +169,6 @@ def launch_and_setup():
     press_f()
     time.sleep(FRIGATE_WAIT)
 
-    # Scroll only on Living_room (the always-first view after a clean launch)
     print("Scrolling to centre Living_room view...")
     time.sleep(SCROLL_WAIT)
     move_to_center()
@@ -269,13 +222,7 @@ def main():
 
     while True:
         print(f"[Loop] Waiting {CYCLE_WAIT}s...")
-        needs_restart = watchdog_wait(CYCLE_WAIT)
-
-        if needs_restart:
-            print("[Loop] Hard restart...")
-            launch_and_setup()
-            idx = 0
-            continue
+        watchdog_wait(CYCLE_WAIT)
 
         name, icon, needs_back, do_scroll = cameras[idx]
         switch_to(icon, name, press_back=needs_back, scroll=do_scroll)
