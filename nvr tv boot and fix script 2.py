@@ -156,6 +156,14 @@ def launch_and_setup():
         "--password-store=basic",
         "--disable-default-browser-check",
         f"--user-data-dir={VIVALDI_KIOSK_DIR}",
+        # Prevent renderer memory spiraling on long-running video streams
+        "--renderer-process-limit=1",           # single renderer process
+        "--js-flags=--max-old-space-size=256",  # cap JS heap at 256MB
+        "--disable-dev-shm-usage",              # avoid /dev/shm exhaustion
+        # Force software video decode — hardware decode of multiple streams
+        # causes renderer bloat and crashes on Intel integrated graphics
+        "--disable-accelerated-video-decode",
+        "--disable-accelerated-video-encode",
         URL_START,
     ])
     time.sleep(LOAD_WAIT)
