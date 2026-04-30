@@ -160,10 +160,10 @@ def launch_and_setup():
         "--renderer-process-limit=1",           # single renderer process
         "--js-flags=--max-old-space-size=256",  # cap JS heap at 256MB
         "--disable-dev-shm-usage",              # avoid /dev/shm exhaustion
-        # Force software video decode — hardware decode of multiple streams
-        # causes renderer bloat and crashes on Intel integrated graphics
-        "--disable-accelerated-video-decode",
-        "--disable-accelerated-video-encode",
+        # Hardware video decode offloads work to the Intel GPU, reducing
+        # CPU usage significantly vs software decode. The original dead bird
+        # crashes were caused by an 8GB ulimit (now fixed with LimitDATA=infinity
+        # in the systemd service), not hardware decode instability.
         URL_START,
     ])
     time.sleep(LOAD_WAIT)
@@ -216,6 +216,11 @@ def switch_to(icon_coords, cam_name, press_back=False, scroll=False):
 
 # ── Main ──────────────────────────────────────────────────────────────────────────
 
+# Restart Vivaldi after this many camera switches to clear renderer memory.
+# At ~40s per cycle (20s display + ~20s switching overhead) this restarts
+# roughly every 40 minutes, well before the renderer exhausts resources.
+RESTART_AFTER_CYCLES = 60
+
 def main():
     log("=== frigate_kiosk starting ===")
     launch_and_setup()
@@ -225,10 +230,19 @@ def main():
         ("Living_room",   ICON_CAM1, True,  True),
     ]
     idx = 0
+    cycle_count = 0
 
     while True:
-        log(f"[Loop] Waiting {CYCLE_WAIT}s...")
+        log(f"[Loop] Waiting {CYCLE_WAIT}s... (cycle {cycle_count}/{RESTART_AFTER_CYCLES})")
         watchdog_wait(CYCLE_WAIT)
+
+        cycle_count += 1
+        if cycle_count >= RESTART_AFTER_CYCLES:
+            log("[Loop] Scheduled Vivaldi restart to clear renderer memory...")
+            launch_and_setup()
+            idx = 0
+            cycle_count = 0
+            continue
 
         name, icon, needs_back, do_scroll = cameras[idx]
         switch_to(icon, name, press_back=needs_back, scroll=do_scroll)
