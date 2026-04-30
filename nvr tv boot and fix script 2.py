@@ -2,9 +2,10 @@
 """
 camera_cycle.py — single-browser Frigate camera cycling script.
 
-Crash recovery is handled by systemd Restart=always — no pixel-based crash
-detection needed. The watchdog only handles network outages, pausing the
-cycle until Frigate is reachable again rather than cycling broken streams.
+Crash recovery is handled by systemd Restart=always.
+Watchdog only handles network outages.
+Logs to ~/frigate_kiosk.log so crashes are captured regardless of
+journald configuration.
 """
 
 import os
@@ -16,9 +17,24 @@ import subprocess
 import time
 import urllib.request
 import urllib.error
+import logging
 import pyautogui
 
 pyautogui.FAILSAFE = False
+
+# ── Logging ───────────────────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    filename="/home/warmachine/frigate_kiosk.log",
+    level=logging.INFO,
+    format="%(asctime)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+def log(msg):
+    print(msg)
+    logging.info(msg)
+
 
 # ── Config ───────────────────────────────────────────────────────────────────────
 
@@ -31,18 +47,16 @@ ICON_CAM1 = (24, 265)   # Living_room
 ICON_CAM2 = (25, 291)   # Living_room_2
 
 # Safe zone: top of left sidebar, above first camera icon (y=265).
-# Cursor must be here before every 'f' press — Frigate maximizes whichever
-# camera tile the cursor is over, so it must never be over a tile.
 SAFE_X = 24
 SAFE_Y = 100
 
-LOAD_WAIT      = 20   # seconds after launching Vivaldi
-FRIGATE_WAIT   = 1    # seconds after pressing 'f'
-SIDEBAR_WAIT   = 1    # seconds after sidebar appears before clicking
-BACK_WAIT      = 1    # seconds after Alt+Left
-SCROLL_WAIT    = 4    # extra settle time before scroll on Living_room
-CYCLE_WAIT     = 20   # seconds each camera is shown
-CHECK_INTERVAL = 15   # network watchdog poll interval
+LOAD_WAIT      = 20
+FRIGATE_WAIT   = 1
+SIDEBAR_WAIT   = 1
+BACK_WAIT      = 1
+SCROLL_WAIT    = 4
+CYCLE_WAIT     = 20
+CHECK_INTERVAL = 15
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────────
@@ -53,7 +67,6 @@ def safe_mouse():
 
 
 def press_f():
-    """Always move to safe zone before pressing 'f'."""
     safe_mouse()
     pyautogui.press('f')
     time.sleep(0.5)
@@ -89,16 +102,12 @@ def click_icon(coords):
 
 
 def kill_browsers():
-    print("Killing browsers...")
+    log("Killing browsers...")
     os.system("killall -9 vivaldi-bin firefox firefox-bin 2>/dev/null")
     time.sleep(3)
 
 
 def wipe_vivaldi_session():
-    """
-    Delete Vivaldi's saved session files so it always starts fresh at
-    URL_START rather than restoring the last visited page.
-    """
     session_files = [
         "Current Session", "Current Tabs",
         "Last Session",    "Last Tabs",
@@ -108,7 +117,7 @@ def wipe_vivaldi_session():
         fpath = os.path.join(profile_dir, fname)
         if os.path.exists(fpath):
             os.remove(fpath)
-            print(f"  Wiped: {fpath}")
+            log(f"  Wiped: {fpath}")
 
 
 # ── Network watchdog ──────────────────────────────────────────────────────────────
@@ -122,24 +131,15 @@ def is_network_up():
 
 
 def watchdog_wait(seconds):
-    """
-    Wait for `seconds` total, checking network every CHECK_INTERVAL.
-    If Frigate goes offline, block here until it comes back — no point
-    cycling between two broken streams.
-    Does not check for crashes — systemd Restart=always handles those.
-    """
     deadline = time.time() + seconds
     while time.time() < deadline:
         chunk = min(CHECK_INTERVAL, deadline - time.time())
         time.sleep(chunk)
-
         if not is_network_up():
-            print("[Watchdog] Frigate unreachable — waiting for recovery...")
+            log("[Watchdog] Frigate unreachable — waiting for recovery...")
             while not is_network_up():
                 time.sleep(5)
-            print("[Watchdog] Frigate back online.")
-
-    return False
+            log("[Watchdog] Frigate back online.")
 
 
 # ── Startup ───────────────────────────────────────────────────────────────────────
@@ -148,7 +148,7 @@ def launch_and_setup():
     kill_browsers()
     wipe_vivaldi_session()
 
-    print(f"Launching Vivaldi, waiting {LOAD_WAIT}s...")
+    log(f"Launching Vivaldi, waiting {LOAD_WAIT}s...")
     subprocess.Popen([
         "vivaldi",
         "--new-window",
@@ -160,43 +160,40 @@ def launch_and_setup():
     ])
     time.sleep(LOAD_WAIT)
 
-    print("Pressing f11 for OS fullscreen...")
+    log("Pressing f11 for OS fullscreen...")
     safe_mouse()
     press('f11')
     time.sleep(3.5)
 
-    print("Pressing 'f' for Frigate expand...")
+    log("Pressing 'f' for Frigate expand...")
     press_f()
     time.sleep(FRIGATE_WAIT)
 
-    print("Scrolling to centre Living_room view...")
+    log("Scrolling to centre Living_room view...")
     time.sleep(SCROLL_WAIT)
     move_to_center()
     scroll_down(4)
 
     safe_mouse()
-    print("Setup complete.\n")
+    log("Setup complete.\n")
 
 
 # ── Cycle ─────────────────────────────────────────────────────────────────────────
 
 def switch_to(icon_coords, cam_name, press_back=False, scroll=False):
-    print(f"[Cycle] Switching to {cam_name}...")
+    log(f"[Cycle] Switching to {cam_name}...")
 
-    # De-maximize to reveal sidebar
     press_f()
     time.sleep(FRIGATE_WAIT + SIDEBAR_WAIT)
 
-    # Click sidebar icon
     click_icon(icon_coords)
     time.sleep(1.5)
 
     if press_back:
-        print("[Cycle] Pressing Alt+Left to reach live stream...")
+        log("[Cycle] Pressing Alt+Left to reach live stream...")
         hotkey('alt', 'left')
         time.sleep(BACK_WAIT)
 
-    # Re-maximize
     press_f()
     time.sleep(FRIGATE_WAIT)
 
@@ -206,12 +203,13 @@ def switch_to(icon_coords, cam_name, press_back=False, scroll=False):
         scroll_down(4)
 
     safe_mouse()
-    print(f"[Cycle] Now showing {cam_name}.")
+    log(f"[Cycle] Now showing {cam_name}.")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────────
 
 def main():
+    log("=== frigate_kiosk starting ===")
     launch_and_setup()
 
     cameras = [
@@ -221,7 +219,7 @@ def main():
     idx = 0
 
     while True:
-        print(f"[Loop] Waiting {CYCLE_WAIT}s...")
+        log(f"[Loop] Waiting {CYCLE_WAIT}s...")
         watchdog_wait(CYCLE_WAIT)
 
         name, icon, needs_back, do_scroll = cameras[idx]
